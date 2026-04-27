@@ -149,3 +149,21 @@ describe("discoverModels fallback to /v1/models", () => {
     ).rejects.toThrow(/500/);
   });
 });
+
+describe("discoverModels timeout", () => {
+  it("aborts the fetch after timeoutMs", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+      return new Promise((_resolve, reject) => {
+        const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
+        signal?.addEventListener("abort", () =>
+          reject(signal.reason ?? new Error("aborted")),
+        );
+      });
+    });
+    const start = Date.now();
+    await expect(
+      discoverModels("https://litellm.example.com", "sk-test", { timeoutMs: 30 }),
+    ).rejects.toBeDefined();
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+});
