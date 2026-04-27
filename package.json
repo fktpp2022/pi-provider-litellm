@@ -11,7 +11,14 @@
   },
   "homepage": "https://github.com/balcsida/pi-provider-litellm",
   "bugs": "https://github.com/balcsida/pi-provider-litellm/issues",
-  "keywords": ["pi-mono", "litellm", "llm", "extension", "provider", "proxy"],
+  "keywords": [
+    "pi-mono",
+    "litellm",
+    "llm",
+    "extension",
+    "provider",
+    "proxy"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -27,7 +34,9 @@
     "CHANGELOG.md"
   ],
   "pi": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "scripts": {
     "clean": "shx rm -rf dist",
@@ -44,8 +53,8 @@
     "node": ">=20.0.0"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.70.0",
-    "@mariozechner/pi-ai": "^0.70.0"
+    "@mariozechner/pi-ai": "^0.70.0",
+    "@mariozechner/pi-coding-agent": "^0.70.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
@@ -54,6 +63,7 @@
     "@types/node": "^24.3.0",
     "@typescript/native-preview": "7.0.0-dev.20260120.1",
     "shx": "^0.4.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vitest": "^3.2.4"
   }
