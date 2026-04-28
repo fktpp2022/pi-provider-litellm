@@ -17,4 +17,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/login litellm` interactive login (prompts for base URL + API key).
 - `/litellm-refresh` slash command to force re-fetch.
 - `LITELLM_BASE_URL`, `LITELLM_API_KEY`, `LITELLM_OFFLINE`, `LITELLM_DISCOVERY_TIMEOUT_MS` environment variables.
-- `compat.cacheControlFormat: "anthropic"` for `anthropic/*`-prefixed model IDs.
+- `compat.cacheControlFormat: "anthropic"` for both `anthropic/*`-prefixed model IDs and bare Claude aliases (`claude-*`, `opus-*`, `sonnet-*`, `haiku-*`, case-insensitive). Common LiteLLM deployments alias Claude models without the `anthropic/` prefix; without this flag, prompt caching silently no-ops on Claude through the proxy.

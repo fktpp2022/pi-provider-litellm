@@ -41,10 +41,32 @@ describe("buildCompat", () => {
   it("returns supportsStore: false for non-anthropic models", () => {
     expect(buildCompat("openai/gpt-4o")).toEqual({ supportsStore: false });
     expect(buildCompat("gemini/gemini-2.0-flash")).toEqual({ supportsStore: false });
+    expect(buildCompat("kimi-k2.6")).toEqual({ supportsStore: false });
+    expect(buildCompat("gpt-5.5")).toEqual({ supportsStore: false });
   });
 
   it("adds cacheControlFormat for anthropic-prefixed models", () => {
     expect(buildCompat("anthropic/claude-3-5-sonnet")).toEqual({
+      supportsStore: false,
+      cacheControlFormat: "anthropic",
+    });
+  });
+
+  it("adds cacheControlFormat for bare Claude aliases", () => {
+    for (const id of ["claude-3-5-sonnet", "opus-4.7", "sonnet-4.6", "haiku-4.5"]) {
+      expect(buildCompat(id)).toEqual({
+        supportsStore: false,
+        cacheControlFormat: "anthropic",
+      });
+    }
+  });
+
+  it("matches case-insensitively", () => {
+    expect(buildCompat("Opus-4.7")).toEqual({
+      supportsStore: false,
+      cacheControlFormat: "anthropic",
+    });
+    expect(buildCompat("CLAUDE-3-5-SONNET")).toEqual({
       supportsStore: false,
       cacheControlFormat: "anthropic",
     });

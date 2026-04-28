@@ -16,8 +16,15 @@ export function normalizeBaseUrl(input: string): string {
   return input.replace(/\/+$/, "").replace(/\/v1\/?$/i, "");
 }
 
+// Matches both the conventional `anthropic/...` prefix and bare aliases that
+// LiteLLM deployments commonly assign to Anthropic-backed routes (e.g.
+// `opus-4.7`, `sonnet-4.6`, `haiku-4.5`, `claude-3-5-sonnet`). Without the
+// `cacheControlFormat: "anthropic"` flag, pi never relays cache_control markers
+// through the proxy, so prompt caching silently no-ops on Claude models.
+const ANTHROPIC_MODEL_PATTERN = /^(anthropic\/|claude|opus|sonnet|haiku)/i;
+
 export function buildCompat(modelId: string): ProviderModelConfig["compat"] {
-  if (modelId.startsWith("anthropic/")) {
+  if (ANTHROPIC_MODEL_PATTERN.test(modelId)) {
     return { supportsStore: false, cacheControlFormat: "anthropic" };
   }
   return { supportsStore: false };
