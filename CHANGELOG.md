@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Discovery now resolves credentials with the same auth precedence pi uses for requests.
+- `/litellm-refresh` now honors `LITELLM_DISCOVERY_TIMEOUT_MS=0`.
+
+### Changed
+
+- CI now verifies a clean build and `npm pack --dry-run` after checks.
+
 ## [0.1.1] - 2026-04-28
 
 ### Added
