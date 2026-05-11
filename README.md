@@ -1,7 +1,5 @@
 # pi-provider-litellm
 
-[![npm version](https://img.shields.io/npm/v/pi-provider-litellm.svg)](https://www.npmjs.com/package/pi-provider-litellm)
-
 LiteLLM proxy provider extension for [pi-mono](https://github.com/badlogic/pi-mono).
 
 Discovers models from a self-hosted LiteLLM proxy and registers them under the `litellm` provider. Supports `/login litellm` and `/litellm-refresh`. Tries `/model/info` first (admin endpoint with rich metadata), falls back to `/v1/models` (OpenAI-compatible) on 401/403/404.
