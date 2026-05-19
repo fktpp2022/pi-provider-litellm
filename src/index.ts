@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fingerprint, readCache, writeCache } from "./cache.js";
@@ -156,6 +156,68 @@ function prepareLiteLLMRequestPayload(
   return next;
 }
 
+function normalizeThinkTags(message: AssistantMessage): AssistantMessage | undefined {
+  if (message.provider !== PROVIDER_NAME || !shouldSuppressReasoningContent(message.model)) return;
+
+  let changed = false;
+  const content: AssistantMessage["content"] = [];
+  const appendText = (text: string): void => {
+    if (!text) return;
+    const last = content.at(-1);
+    if (last?.type === "text") {
+      last.text += text;
+      return;
+    }
+    content.push({ type: "text", text });
+  };
+  const appendThinking = (thinking: string): void => {
+    if (!thinking) return;
+    const last = content.at(-1);
+    if (last?.type === "thinking") {
+      last.thinking += thinking;
+      return;
+    }
+    content.push({ type: "thinking", thinking });
+  };
+
+  for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
+    const block = message.content[blockIndex];
+    if (block.type !== "text") {
+      content.push(block);
+      continue;
+    }
+
+    let index = 0;
+    while (index < block.text.length) {
+      const start = block.text.indexOf("<think>", index);
+      if (start === -1) {
+        appendText(block.text.slice(index));
+        break;
+      }
+
+      changed = true;
+      appendText(block.text.slice(index, start));
+      const thinkingStart = start + "<think>".length;
+      const end = block.text.indexOf("</think>", thinkingStart);
+      if (end === -1) {
+        const isBeforeNonTextContent = message.content
+          .slice(blockIndex + 1)
+          .some((nextBlock) => nextBlock.type !== "text");
+        if (isBeforeNonTextContent) appendThinking(block.text.slice(thinkingStart));
+        else appendText(block.text.slice(thinkingStart));
+        index = block.text.length;
+        break;
+      }
+
+      appendThinking(block.text.slice(thinkingStart, end));
+      index = end + "</think>".length;
+    }
+  }
+
+  if (!changed) return;
+  return { ...message, content };
+}
+
 export default async function (pi: ExtensionAPI): Promise<void> {
   const creds = await resolveCredentials();
   const cache = await readCache(getCachePath());
@@ -272,5 +334,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (ctx.model?.provider !== PROVIDER_NAME) return;
     if (typeof event.payload !== "object" || event.payload === null) return;
     return prepareLiteLLMRequestPayload(event.payload as Record<string, unknown>, ctx.model?.id, sessionId);
+  });
+
+  pi.on("message_end", (event) => {
+    if (event.message.role !== "assistant") return;
+    const message = normalizeThinkTags(event.message as AssistantMessage);
+    if (!message) return;
+    return { message };
   });
 }
