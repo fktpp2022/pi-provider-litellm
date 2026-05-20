@@ -78,7 +78,9 @@ async function smokeChatCompletion(
       signal,
     });
     if (!response.ok) {
-      throw new Error(`/v1/chat/completions for ${modelId} returned ${response.status}${await readErrorBody(response)}`);
+      throw new Error(
+        `/v1/chat/completions for ${modelId} returned ${response.status}${await readErrorBody(response)}`,
+      );
     }
     const data = (await response.json()) as ChatCompletionResponse;
     const content = data.choices?.[0]?.message?.content;
@@ -124,7 +126,9 @@ export async function runSmokeFromEnv(env: NodeJS.ProcessEnv = process.env): Pro
     throw new Error("LITELLM_BASE_URL and LITELLM_API_KEY must be set");
   }
 
-  const timeoutMs = env.LITELLM_SMOKE_TIMEOUT_MS ? Number.parseInt(env.LITELLM_SMOKE_TIMEOUT_MS, 10) : DEFAULT_TIMEOUT_MS;
+  const timeoutMs = env.LITELLM_SMOKE_TIMEOUT_MS
+    ? Number.parseInt(env.LITELLM_SMOKE_TIMEOUT_MS, 10)
+    : DEFAULT_TIMEOUT_MS;
   return runSmoke({
     baseUrl,
     apiKey,

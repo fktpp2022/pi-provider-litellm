@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseSmokeModels, runSmoke } from "../scripts/smoke-runner.js";
 
 function jsonResponse(status: number, body: unknown): Response {
