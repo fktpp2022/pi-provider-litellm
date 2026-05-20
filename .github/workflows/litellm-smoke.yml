@@ -1,0 +1,183 @@
+name: LiteLLM Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      require_vendors:
+        description: Fail unless OpenAI, Anthropic, and Gemini secrets are configured
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23 4 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/litellm-smoke.yml'
+      - 'package-lock.json'
+      - 'package.json'
+      - 'scripts/smoke*.ts'
+      - 'src/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+  models: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LITELLM_BASE_URL: http://127.0.0.1:4000
+      LITELLM_API_KEY: sk-ci-litellm-smoke
+      LITELLM_MASTER_KEY: sk-ci-litellm-smoke
+      LITELLM_IMAGE: docker.litellm.ai/berriai/litellm:main-latest
+      GH_MODELS_SMOKE_MODEL: ${{ vars.GH_MODELS_SMOKE_MODEL || 'openai/gpt-4o-mini' }}
+      OPENAI_SMOKE_MODEL: ${{ vars.OPENAI_SMOKE_MODEL || 'gpt-4.1-nano' }}
+      ANTHROPIC_SMOKE_MODEL: ${{ vars.ANTHROPIC_SMOKE_MODEL || 'claude-haiku-4-5-20251001' }}
+      GEMINI_SMOKE_MODEL: ${{ vars.GEMINI_SMOKE_MODEL || 'gemini-2.5-flash-lite' }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Write LiteLLM smoke config
+        id: config
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          REQUIRE_VENDORS: ${{ github.event_name == 'workflow_dispatch' && inputs.require_vendors && '1' || '0' }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$REQUIRE_VENDORS" == "1" ]]; then
+            missing=()
+            [[ -n "${OPENAI_API_KEY:-}" ]] || missing+=("OPENAI_API_KEY")
+            [[ -n "${ANTHROPIC_API_KEY:-}" ]] || missing+=("ANTHROPIC_API_KEY")
+            [[ -n "${GEMINI_API_KEY:-}" ]] || missing+=("GEMINI_API_KEY")
+            if (( ${#missing[@]} > 0 )); then
+              printf 'Missing required vendor secrets: %s\n' "${missing[*]}" >&2
+              exit 1
+            fi
+          fi
+
+          mkdir -p .tmp
+          smoke_models=("github-models-openai")
+
+          cat > .tmp/litellm_config.yaml <<YAML
+          model_list:
+            - model_name: github-models-openai
+              litellm_params:
+                model: openai/${GH_MODELS_SMOKE_MODEL}
+                api_base: https://models.github.ai/inference
+                api_key: os.environ/GITHUB_TOKEN
+          YAML
+
+          if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+            smoke_models+=("openai-direct")
+            cat >> .tmp/litellm_config.yaml <<YAML
+            - model_name: openai-direct
+              litellm_params:
+                model: openai/${OPENAI_SMOKE_MODEL}
+                api_key: os.environ/OPENAI_API_KEY
+          YAML
+          else
+            echo "Skipping OpenAI direct smoke: OPENAI_API_KEY is not configured."
+          fi
+
+          if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+            smoke_models+=("anthropic-direct")
+            cat >> .tmp/litellm_config.yaml <<YAML
+            - model_name: anthropic-direct
+              litellm_params:
+                model: anthropic/${ANTHROPIC_SMOKE_MODEL}
+                api_key: os.environ/ANTHROPIC_API_KEY
+          YAML
+          else
+            echo "Skipping Anthropic direct smoke: ANTHROPIC_API_KEY is not configured."
+          fi
+
+          if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+            smoke_models+=("gemini-direct")
+            cat >> .tmp/litellm_config.yaml <<YAML
+            - model_name: gemini-direct
+              litellm_params:
+                model: gemini/${GEMINI_SMOKE_MODEL}
+                api_key: os.environ/GEMINI_API_KEY
+          YAML
+          else
+            echo "Skipping Gemini direct smoke: GEMINI_API_KEY is not configured."
+          fi
+
+          cat >> .tmp/litellm_config.yaml <<YAML
+          general_settings:
+            master_key: ${LITELLM_MASTER_KEY}
+          YAML
+
+          {
+            echo 'models<<EOF'
+            printf '%s\n' "${smoke_models[@]}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Start LiteLLM proxy
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -euo pipefail
+          docker run -d \
+            --name litellm-smoke \
+            -p 4000:4000 \
+            -v "$PWD/.tmp/litellm_config.yaml:/app/config.yaml:ro" \
+            -e GITHUB_TOKEN \
+            -e OPENAI_API_KEY \
+            -e ANTHROPIC_API_KEY \
+            -e GEMINI_API_KEY \
+            -e LITELLM_MASTER_KEY \
+            "$LITELLM_IMAGE" \
+            --config /app/config.yaml
+
+      - name: Wait for LiteLLM proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in {1..60}; do
+            if curl -fsS \
+              -H "Authorization: Bearer $LITELLM_API_KEY" \
+              "$LITELLM_BASE_URL/v1/models" >/tmp/litellm-models.json; then
+              cat /tmp/litellm-models.json
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs litellm-smoke >&2 || true
+          exit 1
+
+      - name: Run provider smoke
+        env:
+          LITELLM_SMOKE_MODELS: ${{ steps.config.outputs.models }}
+          LITELLM_SMOKE_TIMEOUT_MS: '60000'
+        run: npx tsx scripts/smoke.ts
+
+      - name: Dump LiteLLM logs
+        if: failure()
+        run: docker logs litellm-smoke || true
+
+      - name: Stop LiteLLM proxy
+        if: always()
+        run: docker rm -f litellm-smoke || true
