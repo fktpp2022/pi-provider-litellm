@@ -68,9 +68,9 @@ Stored pi credentials for `litellm` take precedence over `LITELLM_API_KEY`; the 
 
 ## Mocked LiteLLM smoke workflow
 
-The `LiteLLM Smoke` GitHub Actions workflow starts VidaiMock and a real LiteLLM proxy on the runner. LiteLLM exposes one `vidaimock-openai` model whose upstream is VidaiMock's OpenAI-compatible `/v1` API, then this extension's smoke runner discovers that model through LiteLLM and sends a `/v1/chat/completions` request through the proxy.
+The `LiteLLM Smoke` GitHub Actions workflow starts VidaiMock and a real LiteLLM proxy on the runner. LiteLLM exposes OpenAI-compatible and Anthropic routes whose upstreams are served by VidaiMock, then this extension's smoke runner discovers those models through LiteLLM and sends `/v1/chat/completions` requests through the proxy.
 
-This keeps the LiteLLM integration path under test but does not call real LLM APIs. No provider API keys or GitHub Models permission are required.
+This keeps the LiteLLM integration path under test but does not call real LLM APIs. No provider API keys or GitHub Models permission are required. The workflow also runs a non-interactive Pi CLI smoke with `--list-models` and `-p` so extension loading, model discovery, and a real completion path are covered without opening the TUI.
 
 ## Slash commands
 

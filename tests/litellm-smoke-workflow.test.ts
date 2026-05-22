@@ -21,11 +21,19 @@ describe("LiteLLM smoke workflow", () => {
     expect(workflow).toContain("Start VidaiMock");
     expect(workflow).toContain("Wait for VidaiMock");
     expect(workflow).toContain("VIDAIMOCK_BASE_URL: http://127.0.0.1:8100");
-    expect(workflow).toContain("LITELLM_SMOKE_MODEL: vidaimock-openai");
+    expect(workflow).toContain("LITELLM_SMOKE_MODELS: vidaimock-openai anthropic/vidaimock-claude");
+    expect(workflow).toContain("LITELLM_CLI_SMOKE_MODEL: vidaimock-openai");
+    expect(workflow).toContain("model_name: vidaimock-openai");
+    expect(workflow).toContain("model_name: anthropic/vidaimock-claude");
     expect(workflow).toContain("model: openai/gpt-4o-mini");
+    expect(workflow).toContain("model: anthropic/claude-3-5-sonnet");
     expect(workflow).toContain("api_base: http://host.docker.internal:8100/v1");
+    expect(workflow).toContain("api_base: http://host.docker.internal:8100");
     expect(workflow).toContain("--add-host=host.docker.internal:host-gateway");
-    expect(workflow).toContain("LITELLM_SMOKE_MODELS: $" + "{{ env.LITELLM_SMOKE_MODEL }}");
+    expect(workflow).toContain("Run Pi CLI smoke");
+    expect(workflow).toContain("./node_modules/.bin/pi -e ./dist/index.js --list-models litellm");
+    expect(workflow).toContain("--provider litellm");
+    expect(workflow).toContain('--model "$LITELLM_CLI_SMOKE_MODEL"');
 
     expect(workflow).not.toContain("models: read");
     expect(workflow).not.toContain("GH_MODELS_SMOKE_MODEL");
@@ -33,6 +41,7 @@ describe("LiteLLM smoke workflow", () => {
     expect(workflow).not.toContain("ANTHROPIC_API_KEY");
     expect(workflow).not.toContain("GEMINI_API_KEY");
     expect(workflow).not.toContain("require_vendors");
+    expect(workflow).not.toContain("model_name: kimi-vidaimock");
   });
 
   it("documents the mocked smoke workflow without provider secrets", () => {
@@ -42,6 +51,9 @@ describe("LiteLLM smoke workflow", () => {
     expect(readme).toContain("VidaiMock");
     expect(readme).toContain("does not call real LLM APIs");
     expect(readme).toContain("No provider API keys or GitHub Models permission are required");
+    expect(readme).toContain("OpenAI-compatible and Anthropic routes");
+    expect(readme).toContain("non-interactive Pi CLI smoke");
+    expect(readme).not.toContain("Kimi-shaped routes");
 
     expect(readme).not.toContain("## Real LiteLLM smoke workflow");
     expect(readme).not.toContain("OPENAI_API_KEY");

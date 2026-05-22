@@ -26,7 +26,8 @@ jobs:
       LITELLM_API_KEY: sk-ci-litellm-smoke
       LITELLM_MASTER_KEY: sk-ci-litellm-smoke
       LITELLM_IMAGE: docker.litellm.ai/berriai/litellm:main-latest
-      LITELLM_SMOKE_MODEL: vidaimock-openai
+      LITELLM_SMOKE_MODELS: vidaimock-openai anthropic/vidaimock-claude
+      LITELLM_CLI_SMOKE_MODEL: vidaimock-openai
       VIDAIMOCK_BASE_URL: http://127.0.0.1:8100
       VIDAIMOCK_VERSION: v0.2.7
 
@@ -90,10 +91,15 @@ jobs:
           mkdir -p .tmp
           cat > .tmp/litellm_config.yaml <<YAML
           model_list:
-            - model_name: ${LITELLM_SMOKE_MODEL}
+            - model_name: vidaimock-openai
               litellm_params:
                 model: openai/gpt-4o-mini
                 api_base: http://host.docker.internal:8100/v1
+                api_key: sk-vidaimock
+            - model_name: anthropic/vidaimock-claude
+              litellm_params:
+                model: anthropic/claude-3-5-sonnet
+                api_base: http://host.docker.internal:8100
                 api_key: sk-vidaimock
           general_settings:
             master_key: ${LITELLM_MASTER_KEY}
@@ -130,9 +136,29 @@ jobs:
 
       - name: Run provider smoke
         env:
-          LITELLM_SMOKE_MODELS: ${{ env.LITELLM_SMOKE_MODEL }}
           LITELLM_SMOKE_TIMEOUT_MS: '60000'
         run: npx tsx scripts/smoke.ts
+
+      - name: Run Pi CLI smoke
+        env:
+          LITELLM_DISCOVERY_TIMEOUT_MS: '60000'
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-cli-smoke
+        run: |
+          set -euo pipefail
+
+          rm -rf "$PI_CODING_AGENT_DIR"
+          ./node_modules/.bin/pi -e ./dist/index.js --list-models litellm 2>&1 | tee /tmp/pi-litellm-models.txt
+          grep -F "vidaimock-openai" /tmp/pi-litellm-models.txt
+          grep -F "anthropic/vidaimock-claude" /tmp/pi-litellm-models.txt
+
+          ./node_modules/.bin/pi \
+            -e ./dist/index.js \
+            --provider litellm \
+            --model "$LITELLM_CLI_SMOKE_MODEL" \
+            --no-tools \
+            --no-session \
+            -p "Reply with one short word." | tee /tmp/pi-litellm-response.txt
+          grep -F "mock response" /tmp/pi-litellm-response.txt
 
       - name: Dump LiteLLM logs
         if: failure()

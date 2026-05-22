@@ -9,6 +9,13 @@ const ORIGINAL_ENV = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
 type TestProviderConfig = {
   baseUrl?: string;
   models?: unknown[];
+  oauth?: {
+    login: (callbacks: {
+      onPrompt: (options: { message: string; placeholder?: string }) => Promise<string>;
+      onProgress?: (message: string) => void;
+      signal?: AbortSignal;
+    }) => Promise<{ access: string; refresh: string; expires: number; baseUrl?: string }>;
+  };
 };
 
 type TestCommand = {
@@ -136,5 +143,51 @@ describe("extension startup", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith("LiteLLM refresh disabled (LITELLM_DISCOVERY_TIMEOUT_MS=0)", "warning");
+  });
+
+  it("prompts during login and caches discovered models", async () => {
+    const agentDir = await makeAgentDir();
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    const seenRequests: Array<{ url: string; authorization: string }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      seenRequests.push({
+        url,
+        authorization: new Headers(init?.headers).get("authorization") ?? "",
+      });
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [{ model_name: "vidaimock-openai", model_info: { mode: "chat" } }],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const promptMessages: string[] = [];
+    const progress = vi.fn();
+    const credential = await pi.providers[0]?.config.oauth?.login({
+      onPrompt: async (options) => {
+        promptMessages.push(options.message);
+        return promptMessages.length === 1 ? " http://127.0.0.1:4000/v1 " : " sk-login ";
+      },
+      onProgress: progress,
+      signal: new AbortController().signal,
+    });
+
+    expect(promptMessages).toEqual(["Enter LiteLLM proxy URL (no trailing /v1):", "Enter API key:"]);
+    expect(seenRequests).toEqual([{ url: "http://127.0.0.1:4000/model/info", authorization: "Bearer sk-login" }]);
+    expect(credential).toMatchObject({
+      access: "sk-login",
+      refresh: "",
+      baseUrl: "http://127.0.0.1:4000",
+    });
+    const cache = JSON.parse(await readFile(join(agentDir, "litellm-models.json"), "utf8")) as {
+      models: Array<{ id: string }>;
+    };
+    expect(cache.models.map((model) => model.id)).toEqual(["vidaimock-openai"]);
+    expect(progress).toHaveBeenCalledWith("LiteLLM: 1 models discovered (source: model_info)");
   });
 });
