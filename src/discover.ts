@@ -42,12 +42,12 @@ export function normalizeBaseUrl(input: string): string {
   return input.replace(/\/+$/, "").replace(/\/v1\/?$/i, "");
 }
 
-// Matches both the conventional `anthropic/...` prefix and bare aliases that
+// Matches both the conventional `anthropic/...` prefix and aliases that
 // LiteLLM deployments commonly assign to Anthropic-backed routes (e.g.
-// `opus-4.7`, `sonnet-4.6`, `haiku-4.5`, `claude-3-5-sonnet`). Without the
-// `cacheControlFormat: "anthropic"` flag, pi never relays cache_control markers
-// through the proxy, so prompt caching silently no-ops on Claude models.
-const ANTHROPIC_MODEL_PATTERN = /^(anthropic\/|claude|opus|sonnet|haiku)/i;
+// `google/claude-sonnet-4-6`, `opus-4.7`, `sonnet-4.6`, `haiku-4.5`). Without
+// the `cacheControlFormat: "anthropic"` flag, pi never relays cache_control
+// markers through the proxy, so prompt caching silently no-ops on Claude models.
+const ANTHROPIC_MODEL_PATTERN = /(?:^|[-_/.:])(?:anthropic\/|(?:claude|opus|sonnet|haiku)(?=$|[-_/.:]))/i;
 const MOONSHOT_MODEL_PATTERN = /^(moonshotai\/|moonshot\/|kimi[-/])/i;
 const FORCED_THINKING_MODEL_PATTERN = /(?:^|[-/])thinking(?:[-/]|$)/i;
 
