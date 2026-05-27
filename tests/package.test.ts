@@ -20,13 +20,15 @@ describe("package gallery metadata", () => {
 });
 
 describe("pi package compatibility", () => {
-  it("allows the supported 0.75 and 0.76 pi package lines", async () => {
+  it("declares pi host packages as optional peers", async () => {
     const { default: manifest } = await import("../package.json", {
       with: { type: "json" },
     });
 
-    expect(manifest.peerDependencies["@earendil-works/pi-ai"]).toBe(">=0.75.4 <0.77.0");
-    expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe(">=0.75.4 <0.77.0");
+    expect(manifest.peerDependencies["@earendil-works/pi-ai"]).toBe("*");
+    expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("*");
+    expect(manifest.peerDependenciesMeta["@earendil-works/pi-ai"].optional).toBe(true);
+    expect(manifest.peerDependenciesMeta["@earendil-works/pi-coding-agent"].optional).toBe(true);
   });
 });
 
