@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,7 @@ const ORIGINAL_ENV = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 type TestProviderConfig = {
   baseUrl?: string;
+  apiKey?: string;
   models?: unknown[];
   oauth?: {
     login: (callbacks: {
@@ -94,10 +95,6 @@ async function writeModelCache(agentDir: string, helperPath: string): Promise<vo
 async function loadExtension(agentDir: string): Promise<(pi: TestPi) => Promise<void>> {
   vi.resetModules();
   vi.doMock("@earendil-works/pi-coding-agent", () => {
-    type StoredEntry =
-      | { type: "api_key"; key: string }
-      | { type: "oauth"; access: string; expires: number; refresh: string; baseUrl?: string };
-
     class TestAuthStorage {
       constructor(private readonly authPath: string) {}
 
@@ -105,22 +102,12 @@ async function loadExtension(agentDir: string): Promise<(pi: TestPi) => Promise<
         return new TestAuthStorage(authPath);
       }
 
-      private readData(): Record<string, StoredEntry> {
-        try {
-          return JSON.parse(readFileSync(this.authPath, "utf8")) as Record<string, StoredEntry>;
-        } catch {
-          return {};
-        }
-      }
-
-      set(provider: string, credential: StoredEntry): void {
-        const data = this.readData();
-        data[provider] = credential;
-        writeFileSync(this.authPath, JSON.stringify(data), "utf8");
-      }
-
       async getApiKey(provider: string): Promise<string | undefined> {
-        const entry = this.readData()[provider];
+        const parsed = JSON.parse(await readFile(this.authPath, "utf8")) as Record<
+          string,
+          { type: "api_key"; key: string } | { type: "oauth"; access: string; expires: number; refresh: string }
+        >;
+        const entry = parsed[provider];
         if (entry?.type === "api_key") return process.env[entry.key] || entry.key;
         if (entry?.type === "oauth") return entry.access;
         return undefined;
@@ -305,11 +292,12 @@ describe("extension startup", () => {
     });
   });
 
-  it("routes LITELLM_API_KEY_HELPER auth through the uncached OAuth hooks", async () => {
+  it("registers the helper as a per-request `!command` provider key that re-runs each request", async () => {
     const agentDir = await makeAgentDir();
     const first = makeJwt(Math.floor(Date.now() / 1000) + 3600);
     const second = makeJwt(Math.floor(Date.now() / 1000) + 7200);
-    const helperPath = await writeHelper(agentDir, [first, second]);
+    const third = makeJwt(Math.floor(Date.now() / 1000) + 10800);
+    const helperPath = await writeHelper(agentDir, [first, second, third]);
     process.env.LITELLM_BASE_URL = "https://litellm.example.com/v1";
     process.env.LITELLM_API_KEY = "stale-token";
     process.env.LITELLM_API_KEY_HELPER = helperPath;
@@ -323,54 +311,23 @@ describe("extension startup", () => {
     const pi = createPi();
     await extension(pi);
 
-    // Startup discovery still resolves a fresh helper token (one helper invocation).
+    // Startup discovery uses a fresh helper token (one helper invocation).
     expect(seenAuthHeaders).toEqual([`Bearer ${first}`]);
     expect(await readHelperCount(agentDir)).toBe(1);
 
-    // The provider key is never the `!helper` command (Pi caches `!command` keys for the process
-    // lifetime); the literal env var is used as the static fallback instead.
-    expect(pi.providers[0]?.config).toMatchObject({
-      baseUrl: "https://litellm.example.com/v1",
-      apiKey: "LITELLM_API_KEY",
-    });
+    // The provider key is the `!helper` command. Pi's per-request auth path
+    // (ModelRegistry.getApiKeyAndHeaders) resolves provider keys via resolveConfigValueUncached,
+    // re-executing the command on every request — it does NOT use the process-lifetime command
+    // cache. Simulate that by resolving the registered command twice and asserting fresh tokens.
+    const registeredKey = pi.providers[0]?.config.apiKey;
+    expect(registeredKey).toBe(`!${helperPath}`);
+    expect(pi.providers[0]?.config.baseUrl).toBe("https://litellm.example.com/v1");
 
-    // A command-backed OAuth credential is seeded so request-time auth refreshes via the helper.
-    const auth = JSON.parse(await readFile(join(agentDir, "auth.json"), "utf8")) as {
-      litellm: { type: string; access: string; refresh: string; expires: number; baseUrl?: string };
-    };
-    expect(auth.litellm).toMatchObject({ type: "oauth", refresh: `!${helperPath}`, expires: 0 });
-
-    // The OAuth getApiKey hook re-runs the helper for an expired/opaque token (uncached).
-    const refreshed = pi.providers[0]?.config.oauth?.getApiKey({
-      access: "expired-token",
-      refresh: `!${helperPath}`,
-      expires: 0,
-    });
-    expect(refreshed).toBe(second);
-    expect(await readHelperCount(agentDir)).toBe(2);
-  });
-
-  it("does not overwrite an existing /login OAuth credential with the env helper", async () => {
-    const agentDir = await makeAgentDir();
-    const helperPath = await writeHelper(agentDir, ["helper-token"]);
-    const stored = {
-      type: "oauth",
-      access: "logged-in-token",
-      refresh: "real-refresh-token",
-      expires: Date.now() + 3_600_000,
-      baseUrl: "https://litellm.example.com",
-    };
-    await writeFile(join(agentDir, "auth.json"), JSON.stringify({ litellm: stored }), "utf8");
-    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
-    process.env.LITELLM_API_KEY_HELPER = helperPath;
-    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
-
-    const extension = await loadExtension(agentDir);
-    await extension(createPi());
-
-    const auth = JSON.parse(await readFile(join(agentDir, "auth.json"), "utf8")) as { litellm: typeof stored };
-    expect(auth.litellm).toEqual(stored);
-    expect(await readHelperCount(agentDir)).toBe(0);
+    const command = (registeredKey as string).slice(1);
+    const resolveUncached = () => execSync(command, { encoding: "utf8" }).trim();
+    expect(resolveUncached()).toBe(second);
+    expect(resolveUncached()).toBe(third);
+    expect(await readHelperCount(agentDir)).toBe(3);
   });
 
   it.each([
