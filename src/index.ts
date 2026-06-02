@@ -21,6 +21,8 @@ const LOGIN_TIMEOUT_MS = 10_000;
 const CACHE_FILENAME = "litellm-models.json";
 const CACHE_STALE_MS = 24 * 60 * 60 * 1000;
 const TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000;
+const PERMANENT_TOKEN_EXPIRES_AT = Number.MAX_SAFE_INTEGER;
+const EXPIRE_TOKEN_IMMEDIATELY = 0;
 
 type RefreshResult = { models: ProviderModelConfig[]; source: string };
 
@@ -64,27 +66,27 @@ function executeApiKeyCommand(commandConfig: string): string {
   return output;
 }
 
-function tokenExpiresAt(apiKey: string): number {
+function tokenExpiresAt(apiKey: string, opaqueFallback = PERMANENT_TOKEN_EXPIRES_AT): number {
   const [, payload] = apiKey.split(".");
-  if (!payload) return Number.MAX_SAFE_INTEGER;
+  if (!payload) return opaqueFallback;
   try {
     const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { exp?: unknown };
     return typeof claims.exp === "number"
       ? Math.max(Date.now(), claims.exp * 1000 - TOKEN_REFRESH_LEAD_MS)
-      : Number.MAX_SAFE_INTEGER;
+      : opaqueFallback;
   } catch {
-    return Number.MAX_SAFE_INTEGER;
+    return opaqueFallback;
   }
 }
 
-function shouldRefreshToken(apiKey: string): boolean {
-  return tokenExpiresAt(apiKey) <= Date.now();
+function getLiteLLMApiKey(credentials: OAuthCredentials): string {
+  return credentials.access;
 }
 
-function getLiteLLMApiKey(credentials: OAuthCredentials): string {
-  if (credentials.refresh.startsWith("!")) return executeApiKeyCommand(credentials.refresh);
-  const command = shouldRefreshToken(credentials.access) ? getApiKeyHelperCommand() : undefined;
-  return command ? executeApiKeyCommand(command) : credentials.access;
+function resolveOAuthApiKey(credentials: OAuthCredentials): string {
+  return credentials.refresh.startsWith("!")
+    ? executeApiKeyCommand(credentials.refresh)
+    : getLiteLLMApiKey(credentials);
 }
 
 async function resolveCredentials({ executeHelpers = true } = {}): Promise<ResolvedCredentials> {
@@ -95,7 +97,7 @@ async function resolveCredentials({ executeHelpers = true } = {}): Promise<Resol
   const authBase = entry?.type === "oauth" ? entry.baseUrl?.trim() : undefined;
   const authKey =
     entry?.type === "oauth"
-      ? (executeHelpers ? getLiteLLMApiKey(entry) : entry.access).trim()
+      ? (executeHelpers ? resolveOAuthApiKey(entry) : entry.access).trim()
       : entry?.type === "api_key"
         ? (await AuthStorage.create(getAuthPath()).getApiKey(PROVIDER_NAME, { includeFallback: false }))?.trim()
         : undefined;
@@ -186,7 +188,7 @@ async function loginLiteLLM(
   return {
     access: apiKey,
     refresh,
-    expires: tokenExpiresAt(apiKey),
+    expires: tokenExpiresAt(apiKey, refresh ? EXPIRE_TOKEN_IMMEDIATELY : PERMANENT_TOKEN_EXPIRES_AT),
     baseUrl,
   } as OAuthCredentials & { baseUrl: string };
 }
@@ -194,7 +196,7 @@ async function loginLiteLLM(
 async function refreshLiteLLM(credentials: OAuthCredentials): Promise<OAuthCredentials> {
   if (!credentials.refresh.startsWith("!")) return credentials;
   const access = executeApiKeyCommand(credentials.refresh);
-  return { ...credentials, access, expires: tokenExpiresAt(access) };
+  return { ...credentials, access, expires: tokenExpiresAt(access, EXPIRE_TOKEN_IMMEDIATELY) };
 }
 
 function modifyLiteLLMModels(models: Model<Api>[], cred: OAuthCredentials): Model<Api>[] {

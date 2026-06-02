@@ -357,13 +357,13 @@ describe("extension startup", () => {
     }
   });
 
-  it("refreshes command-backed login credentials", async () => {
+  it("does not re-run command-backed helpers after refreshing login credentials", async () => {
     const agentDir = await makeAgentDir();
     process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
     const now = new Date("2026-05-29T21:00:00.000Z").getTime();
     const first = makeJwt(Math.floor(now / 1000) + 60);
     const second = makeJwt(Math.floor(now / 1000) + 3600);
-    const helperPath = await writeHelper(agentDir, [first, second, "opaque-token"]);
+    const helperPath = await writeHelper(agentDir, [first, second, "unexpected-third-token"]);
     vi.spyOn(Date, "now").mockReturnValue(now);
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse(200, { data: [{ model_name: "claude-opus-4-8", model_info: { mode: "chat" } }] }),
@@ -376,14 +376,37 @@ describe("extension startup", () => {
       onPrompt: async (options) => (options.placeholder ? "https://litellm.example.com" : `!${helperPath}`),
     });
     const refreshed = await pi.providers[0]?.config.oauth?.refreshToken(credential!);
-    const opaque = pi.providers[0]?.config.oauth?.getApiKey({ ...credential!, access: "opaque-old" });
+    const apiKey = pi.providers[0]?.config.oauth?.getApiKey(refreshed!);
 
     expect(credential?.access).toBe(first);
     expect(credential?.refresh).toBe(`!${helperPath}`);
     expect(credential?.expires).toBeLessThan((Math.floor(now / 1000) + 60) * 1000);
     expect(refreshed?.access).toBe(second);
-    expect(opaque).toBe("opaque-token");
-    expect(await readHelperCount(agentDir)).toBe(3);
+    expect(apiKey).toBe(second);
+    expect(await readHelperCount(agentDir)).toBe(2);
+  });
+
+  it("marks opaque command-backed tokens expired without re-running after refresh", async () => {
+    const agentDir = await makeAgentDir();
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    const helperPath = await writeHelper(agentDir, ["opaque-first", "opaque-second", "unexpected-third"]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, { data: [{ model_name: "claude-opus-4-8", model_info: { mode: "chat" } }] }),
+    );
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+    const credential = await pi.providers[0]?.config.oauth?.login({
+      onPrompt: async (options) => (options.placeholder ? "https://litellm.example.com" : `!${helperPath}`),
+    });
+    const refreshed = await pi.providers[0]?.config.oauth?.refreshToken(credential!);
+    const apiKey = pi.providers[0]?.config.oauth?.getApiKey(refreshed!);
+
+    expect(credential).toMatchObject({ access: "opaque-first", refresh: `!${helperPath}`, expires: 0 });
+    expect(refreshed).toMatchObject({ access: "opaque-second", refresh: `!${helperPath}`, expires: 0 });
+    expect(apiKey).toBe("opaque-second");
+    expect(await readHelperCount(agentDir)).toBe(2);
   });
 
   it("uses a helper when stored OAuth credentials contain an expired token", async () => {
