@@ -178,6 +178,18 @@ describe("extension startup", () => {
     expect(pi.providers[0]?.config.apiKey).toBe("$LITELLM_API_KEY");
   });
 
+  it('treats literal "undefined" env values as unset', async () => {
+    process.env.LITELLM_BASE_URL = "undefined";
+    process.env.LITELLM_API_KEY = "undefined";
+    const agentDir = await makeAgentDir();
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+
+    await extension(pi);
+
+    expect(pi.providers[0]?.config.baseUrl).toBe("https://litellm.example.com/v1");
+  });
+
   it("discovers with the resolved stored auth key before LITELLM_API_KEY", async () => {
     const agentDir = await makeAgentDir();
     await writeFile(
