@@ -325,7 +325,7 @@ describe("extension startup", () => {
     expect(registeredModels?.map((model) => model.id)).toEqual(["vidaimock-openai"]);
   });
 
-  it("supports /login litellm as an extension command", async () => {
+  it("handles /login litellm without registering a conflicting command", async () => {
     const agentDir = await makeAgentDir();
     process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -341,27 +341,33 @@ describe("extension startup", () => {
     const pi = createPi();
     await extension(pi);
 
+    expect(pi.commands.has("login")).toBe(false);
     const savedCredentials: Record<string, unknown> = {};
     const promptMessages: string[] = [];
     const notifications: Array<{ message: string; type: string }> = [];
-    await pi.commands.get("login")?.handler("litellm", {
-      ui: {
-        input: async (message, placeholder) => {
-          promptMessages.push(message);
-          return placeholder ? " http://127.0.0.1:4000/v1 " : " sk-login ";
-        },
-        notify: (message, type) => notifications.push({ message, type }),
-      },
-      modelRegistry: {
-        authStorage: {
-          set: (provider, credential) => {
-            savedCredentials[provider] = credential;
+    const result = await pi.handlers.get("input")?.[0]?.(
+      { type: "input", text: "/login litellm", source: "interactive" },
+      {
+        hasUI: true,
+        ui: {
+          input: async (message: string, placeholder?: string) => {
+            promptMessages.push(message);
+            return placeholder ? " http://127.0.0.1:4000/v1 " : " sk-login ";
           },
+          notify: (message: string, type: string) => notifications.push({ message, type }),
         },
-        refresh: vi.fn(),
+        modelRegistry: {
+          authStorage: {
+            set: (provider: string, credential: unknown) => {
+              savedCredentials[provider] = credential;
+            },
+          },
+          refresh: vi.fn(),
+        },
       },
-    });
+    );
 
+    expect(result).toEqual({ action: "handled" });
     expect(promptMessages).toEqual(["Enter LiteLLM proxy URL (no trailing /v1):", "Enter API key:"]);
     expect(savedCredentials.litellm).toMatchObject({
       type: "oauth",
@@ -376,6 +382,24 @@ describe("extension startup", () => {
       message: "LiteLLM: 1 models discovered (source: model_info)",
       type: "info",
     });
+  });
+
+  it("continues input handling for non-LiteLLM login arguments", async () => {
+    const agentDir = await makeAgentDir();
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const result = await pi.handlers.get("input")?.[0]?.(
+      { type: "input", text: "/login other", source: "interactive" },
+      {
+        ui: {
+          notify: vi.fn(),
+        },
+      },
+    );
+
+    expect(result).toEqual({ action: "continue" });
   });
 
   it("uses the login cache timestamp for later stale auto-refresh", async () => {
