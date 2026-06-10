@@ -10,6 +10,8 @@ const ENV_KEYS = [
   "LITELLM_API_KEY",
   "LITELLM_API_KEY_HELPER",
   "LITELLM_DISCOVERY_TIMEOUT_MS",
+  "LITELLM_GCLOUD_TOKEN_AUTH",
+  "GOOGLE_APPLICATION_CREDENTIALS",
   "STORED_LITELLM_KEY",
 ];
 const ORIGINAL_ENV = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -139,7 +141,7 @@ async function loadExtension(agentDir: string): Promise<(pi: TestPi) => Promise<
       }
     }
 
-    return { AuthStorage: TestAuthStorage, getAgentDir: () => agentDir };
+    return { AuthStorage: TestAuthStorage, defineTool: (tool: unknown) => tool, getAgentDir: () => agentDir };
   });
   const mod = await import("../src/index.js");
   return mod.default as unknown as (pi: TestPi) => Promise<void>;
@@ -150,11 +152,15 @@ function createPi(): TestPi {
     providers: [],
     commands: new Map(),
     handlers: new Map(),
+    tools: [],
     registerProvider(name: string, config: TestProviderConfig) {
       this.providers.push({ name, config });
     },
     registerCommand(name: string, command: TestCommand) {
       this.commands.set(name, command);
+    },
+    registerTool(tool: { name: string; description: string; execute?: (...args: any[]) => Promise<any> | any }) {
+      this.tools.push(tool);
     },
     on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any) {
       this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]);
@@ -166,8 +172,10 @@ type TestPi = {
   providers: Array<{ name: string; config: TestProviderConfig }>;
   commands: Map<string, TestCommand>;
   handlers: Map<string, Array<(event: any, ctx?: any) => Promise<any> | any>>;
+  tools: Array<{ name: string; description: string; execute?: (...args: any[]) => Promise<any> | any }>;
   registerProvider(name: string, config: TestProviderConfig): void;
   registerCommand(name: string, command: TestCommand): void;
+  registerTool(tool: { name: string; description: string; execute?: (...args: any[]) => Promise<any> | any }): void;
   on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any): void;
 };
 
@@ -225,7 +233,7 @@ describe("extension startup", () => {
     const extension = await loadExtension(agentDir);
     await extension(createPi());
 
-    expect(seenAuthHeaders).toEqual(["Bearer stored-key"]);
+    expect(seenAuthHeaders).toEqual(["Bearer stored-key", "Bearer stored-key"]);
   });
 
   it("does not fetch on refresh when discovery timeout is zero", async () => {
@@ -467,8 +475,8 @@ describe("extension startup", () => {
     const pi = createPi();
     await extension(pi);
 
-    // Startup discovery uses a fresh helper token (one helper invocation).
-    expect(seenAuthHeaders).toEqual([`Bearer ${first}`]);
+    // Startup model and MCP discovery use the same fresh helper token (one helper invocation).
+    expect(seenAuthHeaders).toEqual([`Bearer ${first}`, `Bearer ${first}`]);
     expect(await readHelperCount(agentDir)).toBe(1);
 
     // The provider key is the `!helper` command. Pi's per-request auth path
@@ -616,6 +624,6 @@ describe("extension startup", () => {
     const extension = await loadExtension(agentDir);
     await extension(createPi());
 
-    expect(seenAuthHeaders).toEqual([`Bearer ${fresh}`]);
+    expect(seenAuthHeaders).toEqual([`Bearer ${fresh}`, `Bearer ${fresh}`]);
   });
 });

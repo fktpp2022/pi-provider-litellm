@@ -1,6 +1,6 @@
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
-export type DiscoverySource = "model_info" | "models_list";
+export type DiscoverySource = "model_info" | "models_list" | "health";
 
 export interface CacheFile {
   baseUrl: string;
@@ -39,6 +39,15 @@ export interface ModelInfoResponse {
   data?: ModelInfoEntry[];
 }
 
+export interface HealthModelEntry {
+  model?: string;
+  model_id?: string;
+}
+
+export interface HealthResponse {
+  healthy_endpoints?: HealthModelEntry[];
+}
+
 export interface ModelsListEntry {
   id?: string;
   owned_by?: string;
@@ -56,4 +65,20 @@ export interface ResolvedCredentials {
   baseUrl?: string;
   apiKey?: string;
   apiKeyFingerprint?: string;
+}
+
+export interface LiteLLMMcpTool {
+  name: string;
+  server_name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
+export interface LiteLLMSkill {
+  id?: string;
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  input_schema?: Record<string, unknown>;
+  code?: string;
 }

@@ -7,7 +7,15 @@ import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fingerprint, readCache, writeCache } from "./cache.js";
 import { setupLiteLLMCostTracking } from "./cost.js";
 import { discoverModels, normalizeBaseUrl, shouldSuppressReasoningContent } from "./discover.js";
+import {
+  GCLOUD_TOKEN_CACHE_KEY,
+  getGcloudToken,
+  getGcloudTokenCommand,
+  isGcloudTokenAuthEnabled,
+} from "./gcloud-token.js";
 import { getSessionIdFromFile } from "./litellm.js";
+import { createMcpToolDefinitions } from "./mcp-tools.js";
+import { createSkillsPromptSection, createSkillToolDefinitions, listSkills } from "./skills.js";
 import type { AuthFileEntry, CacheFile, DiscoveryOptions, DiscoveryResult, ResolvedCredentials } from "./types.js";
 
 const PROVIDER_NAME = "litellm";
@@ -94,6 +102,7 @@ async function resolveCredentials({ executeHelpers = true } = {}): Promise<Resol
   const envBase = cleanConfig(process.env[ENV_BASE_URL]);
   const envKey = cleanConfig(process.env[ENV_API_KEY]);
   const envHelperCommand = getApiKeyHelperCommand();
+  const useGcloudToken = isGcloudTokenAuthEnabled();
   const authBase = entry?.type === "oauth" ? entry.baseUrl?.trim() : undefined;
   const authKey =
     entry?.type === "oauth"
@@ -101,18 +110,24 @@ async function resolveCredentials({ executeHelpers = true } = {}): Promise<Resol
       : entry?.type === "api_key"
         ? (await AuthStorage.create(getAuthPath()).getApiKey(PROVIDER_NAME, { includeFallback: false }))?.trim()
         : undefined;
+  const gcloudKey = executeHelpers && useGcloudToken ? (await getGcloudToken())?.trim() : undefined;
   const apiKey =
-    authKey || (executeHelpers && envHelperCommand ? executeApiKeyCommand(envHelperCommand) : undefined) || envKey;
+    authKey ||
+    gcloudKey ||
+    (executeHelpers && envHelperCommand ? executeApiKeyCommand(envHelperCommand) : undefined) ||
+    envKey;
   const apiKeyFingerprint =
     entry?.type === "oauth" && entry.refresh.startsWith("!")
       ? fingerprint(entry.refresh)
       : authKey
         ? fingerprint(authKey)
-        : envHelperCommand
-          ? fingerprint(envHelperCommand)
-          : envKey
-            ? fingerprint(envKey)
-            : undefined;
+        : useGcloudToken
+          ? fingerprint(GCLOUD_TOKEN_CACHE_KEY)
+          : envHelperCommand
+            ? fingerprint(envHelperCommand)
+            : envKey
+              ? fingerprint(envKey)
+              : undefined;
   const rawBase = authBase || envBase;
   return {
     baseUrl: rawBase ? normalizeBaseUrl(rawBase) : undefined,
@@ -135,6 +150,11 @@ function isOffline(): boolean {
 
 function isListModelsMode(): boolean {
   return process.argv.includes("--list-models");
+}
+
+function getProviderApiKeyConfig(): string {
+  if (isGcloudTokenAuthEnabled()) return getGcloudTokenCommand();
+  return getApiKeyHelperCommand() ?? `$${ENV_API_KEY}`;
 }
 
 async function discoverWithFallback(
@@ -316,6 +336,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     (!cacheValid || isListModelsMode());
 
   let credentialWarning: string | undefined;
+  let liveDiscoveryApiKey: string | undefined;
   if (shouldFetch) {
     try {
       creds = await resolveCredentials();
@@ -343,6 +364,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       }
     } else {
       models = result.models;
+      liveDiscoveryApiKey = creds.apiKey;
       const next: CacheFile = {
         baseUrl: creds.baseUrl,
         apiKeyFingerprint: fp,
@@ -383,7 +405,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       // resolveConfigValue). So a short-lived/rotating helper token stays fresh. The OAuth hooks
       // remain registered for `/login litellm` users. See the regression test
       // "re-runs the helper command on every request" in tests/index.test.ts.
-      apiKey: getApiKeyHelperCommand() ?? `$${ENV_API_KEY}`,
+      apiKey: getProviderApiKeyConfig(),
       api: "openai-completions",
       models,
       oauth,
@@ -401,6 +423,48 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (getDiscoveryTimeoutMs() === 0) return `${ENV_TIMEOUT}=0`;
     return null;
   }
+
+  async function resolveRuntimeApiKey(): Promise<string> {
+    const fresh = await resolveCredentials();
+    if (!fresh.apiKey) throw new Error("no credentials. Run /login litellm or set env vars.");
+    return fresh.apiKey;
+  }
+
+  function registerSkillTools(baseUrl: string | undefined): void {
+    if (!baseUrl) return;
+    for (const tool of createSkillToolDefinitions(baseUrl, resolveRuntimeApiKey)) {
+      pi.registerTool(tool);
+    }
+  }
+
+  function seededRuntimeApiKey(seed: string): () => Promise<string> {
+    let first: string | undefined = seed;
+    return async () => {
+      if (first) {
+        const value = first;
+        first = undefined;
+        return value;
+      }
+      return resolveRuntimeApiKey();
+    };
+  }
+
+  async function registerMcpTools(baseUrl: string | undefined, discoveryApiKey: string | undefined): Promise<void> {
+    if (!baseUrl || !discoveryApiKey || discoveryDisabledReason()) return;
+    try {
+      const tools = await createMcpToolDefinitions(baseUrl, seededRuntimeApiKey(discoveryApiKey));
+      for (const tool of tools) {
+        pi.registerTool(tool);
+      }
+    } catch (error) {
+      process.stderr.write(
+        `LiteLLM: MCP tool discovery failed (${error instanceof Error ? error.message : String(error)}).\n`,
+      );
+    }
+  }
+
+  registerSkillTools(creds.baseUrl);
+  await registerMcpTools(creds.baseUrl, liveDiscoveryApiKey);
 
   async function refreshModelsAndCosts(): Promise<RefreshResult> {
     const fresh = await resolveCredentials();
@@ -420,6 +484,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     registerProvider(fresh.baseUrl, result.models);
     updateCosts(result.models);
     cacheFetchedAt = now;
+    await registerMcpTools(fresh.baseUrl, fresh.apiKey);
     return { models: result.models, source: result.source };
   }
 
@@ -455,6 +520,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
     ctx.modelRegistry.authStorage.set(PROVIDER_NAME, { type: "oauth", ...credential });
     ctx.modelRegistry.refresh();
+    const credentialBaseUrl = (credential as { baseUrl?: string }).baseUrl;
+    const credentialAccess = typeof credential.access === "string" ? credential.access : undefined;
+    registerSkillTools(credentialBaseUrl);
+    await registerMcpTools(credentialBaseUrl, credentialAccess);
     ctx.ui.notify(`Logged in to LiteLLM. Credentials saved to ${getAuthPath()}`, "info");
   }
 
@@ -502,6 +571,16 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (ctx.model?.provider !== PROVIDER_NAME) return;
     if (typeof event.payload !== "object" || event.payload === null) return;
     return prepareLiteLLMRequestPayload(event.payload as Record<string, unknown>, ctx.model?.id, sessionId);
+  });
+
+  pi.on("before_agent_start", async (event) => {
+    if (discoveryDisabledReason()) return;
+    const fresh = await resolveCredentials();
+    if (!fresh.baseUrl || !fresh.apiKey) return;
+    const skills = await listSkills(fresh.baseUrl, fresh.apiKey);
+    const section = createSkillsPromptSection(skills);
+    if (!section) return;
+    return { systemPrompt: `${event.systemPrompt}\n\n${section}` };
   });
 
   pi.on("message_end", (event) => {
