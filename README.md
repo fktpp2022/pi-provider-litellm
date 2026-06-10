@@ -64,7 +64,7 @@ Stored pi credentials for `litellm` take precedence over `LITELLM_API_KEY`; the 
 | Variable | Default | Effect |
 |---|---|---|
 | `LITELLM_API_KEY_HELPER` | unset | Command that prints a fresh LiteLLM bearer token. Takes precedence over `LITELLM_API_KEY`. Registered as a `!command` provider key; Pi re-runs it on every request (the per-request auth path is uncached), so rotating/short-lived tokens stay fresh. |
-| `LITELLM_GCLOUD_TOKEN_AUTH` | unset | If set to a non-empty value other than `0`, use Google Application Default Credentials as the LiteLLM bearer token source. This takes precedence over `LITELLM_API_KEY_HELPER` and `LITELLM_API_KEY` when no stored `/login litellm` credential exists. |
+| `LITELLM_GCLOUD_TOKEN_AUTH` | unset | If set to a non-empty value other than `0`, use Google Application Default Credentials as the LiteLLM bearer token source when no stored `/login litellm` credential exists. If ADC is unavailable, the extension falls back to `LITELLM_API_KEY_HELPER` or `LITELLM_API_KEY`. |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Google default ADC path | Optional path to an ADC JSON file used by `LITELLM_GCLOUD_TOKEN_AUTH`. If unset, the extension checks the default gcloud ADC locations. |
 | `LITELLM_OFFLINE` | unset | If `1`, skip discovery on this start; use cache only |
 | `LITELLM_DISCOVERY_TIMEOUT_MS` | `5000` | Discovery fetch timeout in ms; `0` to skip discovery |
@@ -81,7 +81,7 @@ export LITELLM_BASE_URL="https://litellm.your-domain.com"
 export LITELLM_GCLOUD_TOKEN_AUTH=1
 ```
 
-Only `authorized_user` ADC files are supported. Service account JSON files are rejected with a warning. Tokens are cached in memory for 50 minutes and the registered provider key is a Pi `!command`, so request-time auth resolves a fresh token when Pi sends model requests.
+Only `authorized_user` ADC files are supported. Service account JSON files are rejected with a warning. Tokens are cached in memory for 50 minutes and are keyed by the ADC identity, so switching `GOOGLE_APPLICATION_CREDENTIALS` or changing `gcloud auth application-default login` users refreshes both request auth and model discovery cache identity. When ADC is available, the registered provider key is a Pi `!command`, so request-time auth resolves a fresh token when Pi sends model requests. If ADC cannot be read, provider registration uses the same helper or environment API key that discovery used.
 
 ## LiteLLM MCP tools
 
@@ -90,7 +90,7 @@ If your LiteLLM proxy exposes MCP REST endpoints, this extension discovers tools
 - `GET /mcp-rest/tools/list`
 - `POST /mcp-rest/tools/call`
 
-Each discovered tool is registered as a native Pi tool named `mcp_<server>_<tool>`, with simple JSON Schema parameters mapped to Pi/TypeBox parameters. Complex schemas fall back to a single `args` object. MCP discovery runs after successful live model discovery, `/login litellm`, or `/litellm-refresh`; it does not force network or helper-token access when a fresh model cache is used.
+Each discovered tool is registered as a native Pi tool named `mcp_<server>_<tool>`, with simple JSON Schema parameters mapped to Pi/TypeBox parameters. Complex schemas fall back to a single `args` object. The extension accepts LiteLLM's `tools` response shape with `inputSchema` and `mcp_info`, and executes tools with LiteLLM's `server_id`, `name`, and `arguments` fields. MCP discovery runs after successful live model discovery, `/login litellm`, or `/litellm-refresh`; it does not force network or helper-token access when a fresh model cache is used.
 
 ## LiteLLM Skills Gateway
 
@@ -139,7 +139,7 @@ Before tagging a release, keep `package.json` and `package-lock.json` versions i
 
 ## Cache
 
-The model list is cached at `~/.pi/agent/litellm-models.json` with a keyed fingerprint of the base URL + API key. Changing either invalidates the cache automatically.
+The model list is cached at `~/.pi/agent/litellm-models.json` with the base URL and a keyed fingerprint of the selected auth source. Changing the base URL, API key, helper command, or Google ADC identity invalidates the cache automatically.
 
 If the cache is older than 24 hours, the extension refreshes it in the background on session start (non-blocking). Failures are silent — the cached models remain in use. Run `/litellm-refresh` to force an immediate refresh.
 
