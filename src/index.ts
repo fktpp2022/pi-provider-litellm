@@ -263,7 +263,7 @@ async function loginLiteLLM(
       .trim()
       .toLowerCase();
 
-    if (wantVirtualKey !== "n") {
+    if (wantVirtualKey !== "n" && wantVirtualKey !== "no") {
       try {
         callbacks.onProgress?.("Generating virtual key...");
         const generated = await generateVirtualKey(baseUrl, rawToken, callbacks.signal);
@@ -319,7 +319,12 @@ async function loginLiteLLM(
 }
 
 async function refreshLiteLLM(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-  if (!credentials.refresh.startsWith("!")) return credentials;
+  if (!credentials.refresh.startsWith("!")) {
+    if (credentials.expires < PERMANENT_TOKEN_EXPIRES_AT) {
+      throw new Error("LiteLLM credential cannot be refreshed; run /login litellm again");
+    }
+    return credentials;
+  }
   const access = executeApiKeyCommand(credentials.refresh);
   return { ...credentials, access, expires: tokenExpiresAt(access, EXPIRE_TOKEN_IMMEDIATELY) };
 }

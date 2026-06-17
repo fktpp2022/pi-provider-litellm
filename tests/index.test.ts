@@ -897,7 +897,7 @@ describe("extension startup", () => {
     }
   });
 
-  it("enterprise SSO login uses JWT directly when user declines virtual key generation", async () => {
+  it("enterprise SSO login uses JWT directly when user answers no to virtual key generation", async () => {
     const agentDir = await makeAgentDir();
     process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
     const jwt = makeJwt(Math.floor(Date.now() / 1000) + 3600);
@@ -918,7 +918,7 @@ describe("extension startup", () => {
         if (options.placeholder) return "https://litellm.example.com";
         if (options.message.includes("Select login method")) return "2";
         if (options.message.includes("SSO token")) return jwt;
-        return "n";
+        return "no";
       },
       signal: new AbortController().signal,
     });
@@ -926,6 +926,38 @@ describe("extension startup", () => {
     expect(credential).toMatchObject({ access: jwt, refresh: "" });
     expect(credential?.expires).toBeLessThan(Number.MAX_SAFE_INTEGER);
     expect(seenRequests.every(({ url }) => !url.includes("key/generate"))).toBe(true);
+  });
+
+  it("enterprise SSO refresh rejects expiring generated virtual keys without a refresh path", async () => {
+    const agentDir = await makeAgentDir();
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    const jwt = makeJwt(Math.floor(Date.now() / 1000) + 3600);
+    const keyExpiresAt = new Date(Date.now() + 60 * 60 * 1000);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/key/generate"))
+        return jsonResponse(200, { key: "sk-expiring", expires: keyExpiresAt.toISOString() });
+      if (url.endsWith("/model/info"))
+        return jsonResponse(200, { data: [{ model_name: "gpt-4o", model_info: { mode: "chat" } }] });
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const credential = await pi.providers[0]?.config.oauth?.login({
+      onPrompt: async (options) => {
+        if (options.placeholder) return "https://litellm.example.com";
+        if (options.message.includes("Select login method")) return "2";
+        if (options.message.includes("SSO token")) return jwt;
+        return "y";
+      },
+      signal: new AbortController().signal,
+    });
+
+    await expect(pi.providers[0]?.config.oauth?.refreshToken(credential!)).rejects.toThrow(
+      "LiteLLM credential cannot be refreshed; run /login litellm again",
+    );
   });
 
   it("enterprise SSO login falls back to JWT when virtual key generation fails", async () => {
