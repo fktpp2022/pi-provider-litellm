@@ -11,9 +11,6 @@ Please report suspected vulnerabilities privately through GitHub:
 
 https://github.com/balcsida/pi-provider-litellm/security/advisories/new
 
-If you cannot use GitHub private vulnerability reporting, email
-balcsida@gmail.com.
-
 Include enough detail to reproduce or understand the issue, such as affected
 versions, configuration, impact, and a proof of concept if you have one. Do not
 include real API keys, credentials, or other secrets.
