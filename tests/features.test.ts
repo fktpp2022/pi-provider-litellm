@@ -359,6 +359,53 @@ describe("feature parity", () => {
     });
   });
 
+  it("drops reasoning fields for llm-gateway/gpt-5.5 tool requests", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "llm-gateway/gpt-5.5",
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      {
+        payload: {
+          messages: [],
+          tools: [{ type: "function", function: { name: "noop", parameters: { type: "object" } } }],
+          reasoning: { effort: "high", summary: "auto" },
+          include: ["reasoning.encrypted_content", "other"],
+          include_reasoning: true,
+          reasoning_content: true,
+          merge_reasoning_content_in_choices: false,
+          thinking: { type: "enabled" },
+        },
+      },
+      { model: { provider: "litellm", id: "llm-gateway/gpt-5.5" } },
+    );
+    expect(updated).toEqual({
+      messages: [],
+      tools: [{ type: "function", function: { name: "noop", parameters: { type: "object" } } }],
+      include: ["other"],
+    });
+  });
+
   it("normalizes Kimi think tags into Pi thinking blocks", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";

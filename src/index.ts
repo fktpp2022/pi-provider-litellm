@@ -354,6 +354,22 @@ function prepareLiteLLMRequestPayload(
     update("thinking", { type: "disabled" });
   }
 
+  // ponytail: LiteLLM still routes gpt-5.5 tool+reasoning requests through chat completions.
+  // Drop reasoning until the gateway honors /v1/responses for this route.
+  if (modelId === "llm-gateway/gpt-5.5" && Array.isArray(payload.tools) && payload.tools.length > 0) {
+    next ??= { ...payload };
+    delete next.reasoning;
+    delete next.include_reasoning;
+    delete next.reasoning_content;
+    delete next.merge_reasoning_content_in_choices;
+    delete next.thinking;
+    if (Array.isArray(next.include)) {
+      const filteredInclude = next.include.filter((value) => value !== "reasoning.encrypted_content");
+      next.include = filteredInclude;
+      if (filteredInclude.length === 0) delete next.include;
+    }
+  }
+
   if (sessionId) {
     next ??= { ...payload };
     next.litellm_session_id = sessionId;
