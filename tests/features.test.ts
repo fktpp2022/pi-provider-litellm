@@ -387,7 +387,10 @@ describe("feature parity", () => {
     const updated = beforeRequest?.(
       {
         payload: {
-          messages: [],
+          input: [
+            { type: "reasoning", id: "rs_1", encrypted_content: "opaque" },
+            { type: "message", role: "user", content: "hi" },
+          ],
           tools: [{ type: "function", function: { name: "noop", parameters: { type: "object" } } }],
           reasoning: { effort: "high", summary: "auto" },
           reasoning_effort: "high",
@@ -401,7 +404,7 @@ describe("feature parity", () => {
       { model: { provider: "litellm", id: "llm-gateway/gpt-5.5" } },
     );
     expect(updated).toEqual({
-      messages: [],
+      input: [{ type: "message", role: "user", content: "hi" }],
       tools: [{ type: "function", function: { name: "noop", parameters: { type: "object" } } }],
       include: ["other"],
     });

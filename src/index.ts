@@ -335,6 +335,10 @@ function modifyLiteLLMModels(models: Model<Api>[], cred: OAuthCredentials): Mode
   return models.map((m) => (m.provider === PROVIDER_NAME ? { ...m, baseUrl: `${baseUrl}/v1` } : m));
 }
 
+function isReasoningItem(item: unknown): boolean {
+  return typeof item === "object" && item !== null && (item as { type?: unknown }).type === "reasoning";
+}
+
 function prepareLiteLLMRequestPayload(
   payload: Record<string, unknown>,
   modelId: string | undefined,
@@ -368,6 +372,11 @@ function prepareLiteLLMRequestPayload(
       const filteredInclude = next.include.filter((value) => value !== "reasoning.encrypted_content");
       next.include = filteredInclude;
       if (filteredInclude.length === 0) delete next.include;
+    }
+    // Prior turns may have replayed reasoning items (with encrypted_content)
+    // into the input; they are rejected once reasoning is stripped.
+    if (Array.isArray(next.input)) {
+      next.input = next.input.filter((item) => !isReasoningItem(item));
     }
   }
 
