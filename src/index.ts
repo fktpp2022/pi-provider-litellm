@@ -6,7 +6,13 @@ import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "@earen
 import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fingerprint, readCache, writeCache } from "./cache.js";
 import { setupLiteLLMCostTracking } from "./cost.js";
-import { discoverModels, isGpt55Model, normalizeBaseUrl, shouldSuppressReasoningContent, withTimeout } from "./discover.js";
+import {
+  discoverModels,
+  isGpt55Model,
+  normalizeBaseUrl,
+  shouldSuppressReasoningContent,
+  withTimeout,
+} from "./discover.js";
 import {
   getGcloudToken,
   getGcloudTokenCacheKey,
@@ -339,6 +345,15 @@ function isReasoningItem(item: unknown): boolean {
   return typeof item === "object" && item !== null && (item as { type?: unknown }).type === "reasoning";
 }
 
+// Reasoning fields LiteLLM forwards to chat-completions providers. The Moonshot
+// path defaults them off; the gpt-5.5 tool path strips them entirely.
+const REASONING_SUPPRESSION_DEFAULTS: Record<string, unknown> = {
+  include_reasoning: false,
+  reasoning_content: false,
+  merge_reasoning_content_in_choices: true,
+  thinking: { type: "disabled" },
+};
+
 function prepareLiteLLMRequestPayload(
   payload: Record<string, unknown>,
   modelId: string | undefined,
@@ -352,23 +367,13 @@ function prepareLiteLLMRequestPayload(
   };
 
   if (modelId && shouldSuppressReasoningContent(modelId)) {
-    update("include_reasoning", false);
-    update("reasoning_content", false);
-    update("merge_reasoning_content_in_choices", true);
-    update("thinking", { type: "disabled" });
+    for (const [key, value] of Object.entries(REASONING_SUPPRESSION_DEFAULTS)) update(key, value);
   }
 
   // LiteLLM still routes gpt-5.5 tool+reasoning requests through chat completions.
   // Drop reasoning until the gateway honors /v1/responses for this route.
   if (modelId && isGpt55Model(modelId) && Array.isArray(payload.tools) && payload.tools.length > 0) {
-    const reasoningKeys = [
-      "reasoning",
-      "reasoning_effort",
-      "include_reasoning",
-      "reasoning_content",
-      "merge_reasoning_content_in_choices",
-      "thinking",
-    ];
+    const reasoningKeys = ["reasoning", "reasoning_effort", ...Object.keys(REASONING_SUPPRESSION_DEFAULTS)];
     for (const key of reasoningKeys) {
       if (payload[key] === undefined) continue;
       next ??= { ...payload };
