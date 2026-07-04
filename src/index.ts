@@ -6,7 +6,7 @@ import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "@earen
 import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { fingerprint, readCache, writeCache } from "./cache.js";
 import { setupLiteLLMCostTracking } from "./cost.js";
-import { discoverModels, normalizeBaseUrl, shouldSuppressReasoningContent, withTimeout } from "./discover.js";
+import { discoverModels, isGpt55Model, normalizeBaseUrl, shouldSuppressReasoningContent, withTimeout } from "./discover.js";
 import {
   getGcloudToken,
   getGcloudTokenCacheKey,
@@ -354,9 +354,9 @@ function prepareLiteLLMRequestPayload(
     update("thinking", { type: "disabled" });
   }
 
-  // ponytail: LiteLLM still routes gpt-5.5 tool+reasoning requests through chat completions.
+  // LiteLLM still routes gpt-5.5 tool+reasoning requests through chat completions.
   // Drop reasoning until the gateway honors /v1/responses for this route.
-  if (modelId === "llm-gateway/gpt-5.5" && Array.isArray(payload.tools) && payload.tools.length > 0) {
+  if (modelId && isGpt55Model(modelId) && Array.isArray(payload.tools) && payload.tools.length > 0) {
     next ??= { ...payload };
     delete next.reasoning;
     delete next.reasoning_effort;

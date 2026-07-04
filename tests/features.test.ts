@@ -407,6 +407,49 @@ describe("feature parity", () => {
     });
   });
 
+  it("drops reasoning fields for gpt-5.5 route aliases", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "gpt-5.5-20260504143601",
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    for (const id of ["gpt-5.5", "openai/gpt-5.5", "gpt-5.5-20260504143601"]) {
+      const updated = beforeRequest?.(
+        {
+          payload: {
+            messages: [],
+            tools: [{ type: "function", function: { name: "noop", parameters: { type: "object" } } }],
+            reasoning: { effort: "high" },
+          },
+        },
+        { model: { provider: "litellm", id } },
+      );
+      expect(updated, id).toEqual({
+        messages: [],
+        tools: [{ type: "function", function: { name: "noop", parameters: { type: "object" } } }],
+      });
+    }
+  });
+
   it("normalizes Kimi think tags into Pi thinking blocks", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
