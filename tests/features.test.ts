@@ -410,6 +410,44 @@ describe("feature parity", () => {
     });
   });
 
+  it("leaves gpt-5.5 tool requests without reasoning fields unchanged", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "llm-gateway/gpt-5.5",
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      {
+        payload: {
+          input: [{ type: "message", role: "user", content: "hi" }],
+          tools: [{ type: "function", function: { name: "noop", parameters: { type: "object" } } }],
+          include: ["other"],
+        },
+      },
+      { model: { provider: "litellm", id: "llm-gateway/gpt-5.5" } },
+    );
+    expect(updated).toBeUndefined();
+  });
+
   it("drops reasoning fields for gpt-5.5 route aliases", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";

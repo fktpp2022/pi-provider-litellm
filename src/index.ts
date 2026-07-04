@@ -361,22 +361,32 @@ function prepareLiteLLMRequestPayload(
   // LiteLLM still routes gpt-5.5 tool+reasoning requests through chat completions.
   // Drop reasoning until the gateway honors /v1/responses for this route.
   if (modelId && isGpt55Model(modelId) && Array.isArray(payload.tools) && payload.tools.length > 0) {
-    next ??= { ...payload };
-    delete next.reasoning;
-    delete next.reasoning_effort;
-    delete next.include_reasoning;
-    delete next.reasoning_content;
-    delete next.merge_reasoning_content_in_choices;
-    delete next.thinking;
-    if (Array.isArray(next.include)) {
-      const filteredInclude = next.include.filter((value) => value !== "reasoning.encrypted_content");
-      next.include = filteredInclude;
+    const reasoningKeys = [
+      "reasoning",
+      "reasoning_effort",
+      "include_reasoning",
+      "reasoning_content",
+      "merge_reasoning_content_in_choices",
+      "thinking",
+    ];
+    for (const key of reasoningKeys) {
+      if (payload[key] === undefined) continue;
+      next ??= { ...payload };
+      delete next[key];
+    }
+    const include = (next ?? payload).include;
+    if (Array.isArray(include) && include.includes("reasoning.encrypted_content")) {
+      next ??= { ...payload };
+      const filteredInclude = include.filter((value) => value !== "reasoning.encrypted_content");
       if (filteredInclude.length === 0) delete next.include;
+      else next.include = filteredInclude;
     }
     // Prior turns may have replayed reasoning items (with encrypted_content)
     // into the input; they are rejected once reasoning is stripped.
-    if (Array.isArray(next.input)) {
-      next.input = next.input.filter((item) => !isReasoningItem(item));
+    const input = (next ?? payload).input;
+    if (Array.isArray(input) && input.some(isReasoningItem)) {
+      next ??= { ...payload };
+      next.input = input.filter((item) => !isReasoningItem(item));
     }
   }
 
