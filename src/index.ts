@@ -172,6 +172,12 @@ function applyModelOverrides(
   });
 }
 
+// Re-reads models.json on every call so overrides edited mid-session take effect on the next
+// refresh or login, matching pi core's live reload for built-in providers.
+async function applyOverrides(models: ProviderModelConfig[]): Promise<ProviderModelConfig[]> {
+  return applyModelOverrides(models, await readModelOverrides());
+}
+
 async function readAuthEntry(): Promise<AuthFileEntry | undefined> {
   try {
     const raw = await readFile(getAuthPath(), "utf8");
@@ -355,7 +361,7 @@ async function discoverWithFallback(
 
 async function loginLiteLLM(
   callbacks: OAuthLoginCallbacks,
-  onCacheWrite?: (cache: CacheFile) => void,
+  onCacheWrite?: (cache: CacheFile) => void | Promise<void>,
 ): Promise<OAuthCredentials> {
   const rawBaseUrl = (
     await callbacks.onPrompt({
@@ -437,7 +443,7 @@ async function loginLiteLLM(
     models,
   };
   await writeCache(getCachePath(), cache);
-  onCacheWrite?.(cache);
+  await onCacheWrite?.(cache);
   callbacks.onProgress?.(`LiteLLM: ${models.length} models discovered (source: ${source})`);
 
   return {
@@ -591,7 +597,6 @@ function normalizeThinkTags(message: AssistantMessage): AssistantMessage | undef
 
 export default async function (pi: ExtensionAPI): Promise<void> {
   let creds = await resolveCredentials({ executeHelpers: false });
-  const modelOverrides = await readModelOverrides();
   const cache = await readCache(getCachePath());
   let fp = creds.apiKeyFingerprint;
   let cacheFetchedAt = cache?.fetchedAt ?? 0;
@@ -656,15 +661,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
   }
 
+  // The cache keeps raw discovery output; overrides are applied freshly at each registration.
+  models = await applyOverrides(models);
+
   let updateCosts: (models: ProviderModelConfig[]) => void = () => undefined;
 
   const oauth = {
     name: "LiteLLM",
     login: (callbacks: OAuthLoginCallbacks) =>
-      loginLiteLLM(callbacks, (next) => {
+      loginLiteLLM(callbacks, async (next) => {
         cacheFetchedAt = next.fetchedAt;
-        registerProvider(next.baseUrl, next.models);
-        updateCosts(applyModelOverrides(next.models, modelOverrides));
+        const overridden = await applyOverrides(next.models);
+        registerProvider(next.baseUrl, overridden);
+        updateCosts(overridden);
       }),
     refreshToken: refreshLiteLLM,
     getApiKey: getLiteLLMApiKey,
@@ -676,7 +685,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     models: ProviderModelConfig[],
     apiKeyConfig = creds.apiKeyConfig ?? getApiKeyHelperCommand() ?? `$${ENV_API_KEY}`,
   ): void {
-    const registeredModels = applyModelOverrides(models, modelOverrides);
     pi.registerProvider(PROVIDER_NAME, {
       baseUrl: baseUrl ? `${baseUrl}/v1` : "https://litellm.example.com/v1",
       // When LITELLM_API_KEY_HELPER is set we register the helper as a `!command` provider key.
@@ -688,14 +696,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       // "re-runs the helper command on every request" in tests/index.test.ts.
       apiKey: apiKeyConfig,
       api: "openai-completions",
-      models: registeredModels,
+      models,
       oauth,
     });
   }
 
   registerProvider(creds.baseUrl, models);
 
-  updateCosts = setupLiteLLMCostTracking(pi, applyModelOverrides(models, modelOverrides));
+  updateCosts = setupLiteLLMCostTracking(pi, models);
 
   let refreshInProgress: Promise<RefreshResult> | null = null;
 
@@ -762,11 +770,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       source: result.source,
       models: result.models,
     });
-    registerProvider(fresh.baseUrl, result.models, fresh.apiKeyConfig);
-    updateCosts(applyModelOverrides(result.models, modelOverrides));
+    const overridden = await applyOverrides(result.models);
+    registerProvider(fresh.baseUrl, overridden, fresh.apiKeyConfig);
+    updateCosts(overridden);
     cacheFetchedAt = now;
     await registerMcpTools(fresh.baseUrl, fresh.apiKey);
-    return { models: result.models, source: result.source };
+    return { models: overridden, source: result.source };
   }
 
   function runRefresh(): Promise<RefreshResult> {
@@ -795,10 +804,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         onSelect: async () => undefined,
         signal: ctx.signal,
       },
-      (next) => {
+      async (next) => {
         cacheFetchedAt = next.fetchedAt;
-        registerProvider(next.baseUrl, next.models);
-        updateCosts(applyModelOverrides(next.models, modelOverrides));
+        const overridden = await applyOverrides(next.models);
+        registerProvider(next.baseUrl, overridden);
+        updateCosts(overridden);
       },
     );
 
