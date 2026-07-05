@@ -650,18 +650,18 @@ describe("extension startup", () => {
     expect((pi.providers[1]?.config.models as Array<{ id: string }>).map((model) => model.id)).toEqual([
       "claude-sonnet",
     ]);
-    expect(seenModelInfoRequests).toEqual([
-      {
-        url: "https://litellm.example.com/model/info",
-        authorization: "Bearer openai-key",
-        customer: "openai-customer",
-      },
-      {
-        url: "https://litellm-anthropic.example.com/model/info",
-        authorization: "Bearer anthropic-key",
-        customer: "anthropic-customer",
-      },
-    ]);
+    // Providers load in parallel, so cross-provider request order is not deterministic.
+    expect(seenModelInfoRequests).toHaveLength(2);
+    expect(seenModelInfoRequests).toContainEqual({
+      url: "https://litellm.example.com/model/info",
+      authorization: "Bearer openai-key",
+      customer: "openai-customer",
+    });
+    expect(seenModelInfoRequests).toContainEqual({
+      url: "https://litellm-anthropic.example.com/model/info",
+      authorization: "Bearer anthropic-key",
+      customer: "anthropic-customer",
+    });
     const defaultCache = JSON.parse(await readFile(join(agentDir, "litellm-models.json"), "utf8")) as {
       models: Array<{ id: string }>;
     };
@@ -714,10 +714,16 @@ describe("extension startup", () => {
     const pi = createPi();
     await extension(pi);
 
-    expect(seenModelInfoRequests).toEqual([
-      { url: "https://litellm.example.com/model/info", authorization: "Bearer default-helper-key" },
-      { url: "https://litellm-anthropic.example.com/model/info", authorization: "Bearer anthropic-key" },
-    ]);
+    // Providers load in parallel, so cross-provider request order is not deterministic.
+    expect(seenModelInfoRequests).toHaveLength(2);
+    expect(seenModelInfoRequests).toContainEqual({
+      url: "https://litellm.example.com/model/info",
+      authorization: "Bearer default-helper-key",
+    });
+    expect(seenModelInfoRequests).toContainEqual({
+      url: "https://litellm-anthropic.example.com/model/info",
+      authorization: "Bearer anthropic-key",
+    });
     expect(pi.providers[0]?.config.apiKey).toBe(`!${helperPath}`);
     expect(pi.providers[1]?.config.apiKey).toBe("$LITELLM_ANTHROPIC_API_KEY");
   });
