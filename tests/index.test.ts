@@ -1675,4 +1675,35 @@ describe("multi-provider hardening", () => {
     expect(message).toContain("litellm: 1 models");
     expect(message).toContain("litellm-anthropic");
   });
+
+  it("sends custom headers when generating a login virtual key", async () => {
+    const agentDir = await makeAgentDir();
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    process.env.LITELLM_HEADERS = JSON.stringify({ "x-litellm-customer-id": "team-a" });
+    const jwt = makeJwt(Math.floor(Date.now() / 1000) + 3600);
+    const seenRequests: Array<{ url: string; customer: string | null }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      seenRequests.push({ url, customer: new Headers(init?.headers).get("x-litellm-customer-id") });
+      if (url.endsWith("/key/generate")) return jsonResponse(200, { key: "sk-virtual-abc" });
+      if (url.endsWith("/model/info"))
+        return jsonResponse(200, { data: [{ model_name: "gpt-5", model_info: { mode: "chat" } }] });
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    await pi.providers[0]?.config.oauth?.login({
+      onPrompt: async (options) => {
+        if (options.placeholder) return "https://litellm.example.com";
+        if (options.message.includes("Select login method")) return "2";
+        if (options.message.includes("SSO token")) return jwt;
+        return "y";
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(seenRequests).toContainEqual({ url: "https://litellm.example.com/key/generate", customer: "team-a" });
+  });
 });

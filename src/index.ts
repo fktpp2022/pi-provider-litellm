@@ -307,12 +307,14 @@ async function generateVirtualKey(
   baseUrl: string,
   userToken: string,
   signal?: AbortSignal,
+  headers?: Record<string, string>,
 ): Promise<{ key: string; expiresAt?: number }> {
   const { signal: boundedSignal, cancel } = withTimeout(LOGIN_TIMEOUT_MS, signal);
   try {
     const response = await fetch(`${baseUrl}/key/generate`, {
       method: "POST",
       headers: {
+        ...headers,
         Authorization: `Bearer ${userToken}`,
         "Content-Type": "application/json",
       },
@@ -629,7 +631,7 @@ async function loginLiteLLM(
     if (wantVirtualKey !== "n" && wantVirtualKey !== "no") {
       try {
         callbacks.onProgress?.("Generating virtual key...");
-        const generated = await generateVirtualKey(baseUrl, rawToken, callbacks.signal);
+        const generated = await generateVirtualKey(baseUrl, rawToken, callbacks.signal, options.headers);
         apiKey = generated.key;
         refresh = "";
         expires =
