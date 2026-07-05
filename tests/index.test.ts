@@ -129,7 +129,7 @@ async function writeModelsConfig(agentDir: string, modelOverrides: Record<string
   );
 }
 
-async function writeModelCache(agentDir: string, helperPath: string): Promise<void> {
+async function writeModelCache(agentDir: string, helperPath: string, models: unknown[] = cachedModels): Promise<void> {
   await writeFile(
     join(agentDir, "litellm-models.json"),
     JSON.stringify({
@@ -137,7 +137,7 @@ async function writeModelCache(agentDir: string, helperPath: string): Promise<vo
       apiKeyFingerprint: fingerprint(`!${helperPath}`),
       fetchedAt: Date.now(),
       source: "model_info",
-      models: cachedModels,
+      models,
     }),
     "utf8",
   );
@@ -362,6 +362,59 @@ describe("extension startup", () => {
 
     expect(pi.providers[0]?.config.models).toEqual([
       expect.objectContaining({ id: "cached-model", contextWindow: 272_000 }),
+    ]);
+  });
+
+  it("merges partial thinkingLevelMap overrides with existing mappings", async () => {
+    const agentDir = await makeAgentDir();
+    const helperPath = await writeHelper(agentDir, [makeJwt(Math.floor(Date.now() / 1000) + 3600)]);
+    await writeModelCache(agentDir, helperPath, [
+      {
+        id: "cached-model",
+        name: "cached-model",
+        provider: "litellm",
+        thinkingLevelMap: { low: "low", high: "high" },
+      },
+    ]);
+    await writeModelsConfig(agentDir, { "cached-model": { thinkingLevelMap: { high: "xhigh" } } });
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY_HELPER = helperPath;
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    expect(pi.providers[0]?.config.models).toEqual([
+      expect.objectContaining({ id: "cached-model", thinkingLevelMap: { low: "low", high: "xhigh" } }),
+    ]);
+  });
+
+  it("deep-merges nested compat overrides", async () => {
+    const agentDir = await makeAgentDir();
+    const helperPath = await writeHelper(agentDir, [makeJwt(Math.floor(Date.now() / 1000) + 3600)]);
+    await writeModelCache(agentDir, helperPath, [
+      {
+        id: "cached-model",
+        name: "cached-model",
+        provider: "litellm",
+        compat: { supportsStore: false, chatTemplateKwargs: { enable_thinking: true } },
+      },
+    ]);
+    await writeModelsConfig(agentDir, { "cached-model": { compat: { chatTemplateKwargs: { max_thinking: 4 } } } });
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY_HELPER = helperPath;
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    expect(pi.providers[0]?.config.models).toEqual([
+      expect.objectContaining({
+        id: "cached-model",
+        compat: { supportsStore: false, chatTemplateKwargs: { enable_thinking: true, max_thinking: 4 } },
+      }),
     ]);
   });
 

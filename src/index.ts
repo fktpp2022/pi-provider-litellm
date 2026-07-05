@@ -69,16 +69,36 @@ async function readModelOverrides(): Promise<Map<string, ModelOverride>> {
   }
 }
 
+// Merge semantics must match pi core's applyModelOverride/mergeCompat (dist/core/model-registry.js)
+// so the same models.json entry behaves identically for litellm and built-in providers.
+function mergeCompat(
+  base: ProviderModelConfig["compat"],
+  override: ProviderModelConfig["compat"],
+): ProviderModelConfig["compat"] {
+  if (!override) return base;
+  const merged = { ...base, ...override } as Record<string, unknown>;
+  for (const key of ["openRouterRouting", "vercelGatewayRouting", "chatTemplateKwargs"]) {
+    const baseValue = (base as Record<string, unknown> | undefined)?.[key];
+    const overrideValue = (override as Record<string, unknown>)[key];
+    if (baseValue || overrideValue) {
+      merged[key] = { ...(baseValue as object | undefined), ...(overrideValue as object | undefined) };
+    }
+  }
+  return merged as ProviderModelConfig["compat"];
+}
+
 function applyModelOverride(model: ProviderModelConfig, override: ModelOverride): ProviderModelConfig {
   const next = { ...model };
   if (override.name !== undefined) next.name = override.name;
   if (override.reasoning !== undefined) next.reasoning = override.reasoning;
-  if (override.thinkingLevelMap !== undefined) next.thinkingLevelMap = override.thinkingLevelMap;
+  if (override.thinkingLevelMap !== undefined) {
+    next.thinkingLevelMap = { ...model.thinkingLevelMap, ...override.thinkingLevelMap };
+  }
   if (override.input !== undefined) next.input = override.input;
   if (override.contextWindow !== undefined) next.contextWindow = override.contextWindow;
   if (override.maxTokens !== undefined) next.maxTokens = override.maxTokens;
   if (override.headers !== undefined) next.headers = override.headers;
-  if (override.compat !== undefined) next.compat = { ...model.compat, ...override.compat };
+  if (override.compat !== undefined) next.compat = mergeCompat(model.compat, override.compat);
   if (override.cost !== undefined) next.cost = { ...model.cost, ...override.cost };
   return next;
 }
