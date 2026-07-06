@@ -1766,4 +1766,41 @@ describe("multi-provider hardening", () => {
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("x-obj"));
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("x-null"));
   });
+
+  it("invalidates the cache when configured headers change even if the base URL and key match", async () => {
+    const agentDir = await makeAgentDir();
+    await writeFile(
+      join(agentDir, "litellm-models.json"),
+      JSON.stringify({
+        baseUrl: "https://litellm.example.com",
+        apiKeyFingerprint: fingerprint("env-key"),
+        fetchedAt: Date.now(),
+        source: "model_info",
+        models: cachedModels,
+      }),
+      "utf8",
+    );
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "env-key";
+    process.env.LITELLM_HEADERS = JSON.stringify({ "x-litellm-customer-id": "team-b" });
+    const seenRequests: Array<{ customer: string | null }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        seenRequests.push({ customer: new Headers(init?.headers).get("x-litellm-customer-id") });
+        return jsonResponse(200, { data: [{ model_name: "fresh-model", model_info: { mode: "chat" } }] });
+      }
+      if (url.endsWith("/mcp-rest/tools/list")) return jsonResponse(200, { tools: [] });
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    expect(seenRequests).toEqual([{ customer: "team-b" }]);
+    expect((pi.providers[0]?.config.models as Array<{ id: string }>).map((model) => model.id)).toEqual([
+      "fresh-model",
+    ]);
+  });
 });

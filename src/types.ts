@@ -5,6 +5,7 @@ export type DiscoverySource = "model_info" | "models_list" | "health";
 export interface CacheFile {
   baseUrl: string;
   apiKeyFingerprint: string;
+  headersFingerprint?: string;
   fetchedAt: number;
   source: DiscoverySource;
   models: ProviderModelConfig[];

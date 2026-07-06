@@ -437,6 +437,17 @@ function resolveHeaders(definition: ProviderDefinition): Record<string, string> 
   return parseHeaderRecord(definition.headers);
 }
 
+// Headers can select a different tenant/customer at the same base URL with the
+// same key, so the cache must invalidate on header changes too, not just on
+// baseUrl/apiKey changes, or a stale tenant's models get reused silently.
+function computeHeadersFingerprint(headers: Record<string, string> | undefined): string | undefined {
+  if (!headers) return undefined;
+  const sorted = Object.keys(headers)
+    .sort()
+    .map((key) => [key, headers[key]]);
+  return fingerprint(JSON.stringify(sorted));
+}
+
 // Pi core resolves registered header values with the same $VAR/!command syntax
 // at request time, so already-resolved literals must be escaped or they get
 // resolved a second time ($UNSET would then fail every request).
@@ -688,6 +699,7 @@ async function loginLiteLLM(
   const cache: CacheFile = {
     baseUrl,
     apiKeyFingerprint: fingerprint(refresh || apiKey),
+    headersFingerprint: computeHeadersFingerprint(options.headers),
     fetchedAt: Date.now(),
     source,
     models,
@@ -861,6 +873,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   async function loadProviderState(definition: ProviderDefinition): Promise<ProviderState> {
     let creds = await resolveCredentials(definition, { executeHelpers: false });
     const headers = resolveHeaders(definition);
+    const headersFp = computeHeadersFingerprint(headers);
     const cache = await readCache(getCachePath(definition.name));
     let fp = creds.apiKeyFingerprint;
     let cacheFetchedAt = cache?.fetchedAt ?? 0;
@@ -870,7 +883,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       creds.baseUrl !== undefined &&
       fp !== undefined &&
       cache.baseUrl === creds.baseUrl &&
-      cache.apiKeyFingerprint === fp;
+      cache.apiKeyFingerprint === fp &&
+      cache.headersFingerprint === headersFp;
 
     let models: ProviderModelConfig[] = cacheValid && cache ? cache.models : [];
     const shouldFetch =
@@ -927,6 +941,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
         const next: CacheFile = {
           baseUrl: creds.baseUrl,
           apiKeyFingerprint: fp,
+          headersFingerprint: headersFp,
           fetchedAt: Date.now(),
           source: result.source,
           models: result.models,
@@ -1078,6 +1093,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     await writeCache(getCachePath(state.definition.name), {
       baseUrl: fresh.baseUrl,
       apiKeyFingerprint: freshFp,
+      headersFingerprint: computeHeadersFingerprint(state.headers),
       fetchedAt: now,
       source: result.source,
       models: result.models,
