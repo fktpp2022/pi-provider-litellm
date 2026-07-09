@@ -165,6 +165,7 @@ describe("feature parity", () => {
       const url = String(input);
       if (url.endsWith("/model/info")) return jsonResponse(200, { data: [] });
       if (url.endsWith("/mcp-rest/tools/list")) return jsonResponse(200, []);
+      if (url.endsWith("/claude-code/marketplace.json")) return jsonResponse(404, {});
       if (url.endsWith("/v1/skills")) {
         return jsonResponse(200, {
           data: [{ id: "skill-1", name: "terraform", description: "Terraform conventions", enabled: true }],
