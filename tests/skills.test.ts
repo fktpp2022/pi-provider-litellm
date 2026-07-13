@@ -105,6 +105,16 @@ describe("listSkills", () => {
 });
 
 describe("skill helpers", () => {
+  it("rejects legacy skills without code", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(createSkill("https://litellm.example.com", "sk-test", { name: "terraform" })).rejects.toThrow(
+      "code is required when source is omitted",
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("creates skills through the LiteLLM Skill Hub plugins endpoint", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")

@@ -75,6 +75,7 @@ export async function createSkill(
   },
   headers?: Record<string, string>,
 ): Promise<unknown> {
+  if (!input.source && !input.code) throw new Error("code is required when source is omitted");
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
   let usedSkillHub = input.source !== undefined;
   const skillHubPayload = input.source
