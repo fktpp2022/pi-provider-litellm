@@ -140,17 +140,29 @@ export async function deleteSkill(
   headers?: Record<string, string>,
 ): Promise<void> {
   const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
-  let response = await fetch(`${normalizedBaseUrl}/claude-code/plugins/${encodeURIComponent(skillId)}`, {
-    method: "DELETE",
-    headers: { ...headers, Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-    signal: AbortSignal.timeout(10_000),
-  }).catch(() => undefined);
+  let skillHubError: unknown;
+  const skillHubResponse = await fetch(
+    `${normalizedBaseUrl}/claude-code/plugins/${encodeURIComponent(skillId)}`,
+    {
+      method: "DELETE",
+      headers: { ...headers, Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    },
+  ).catch((error: unknown) => {
+    skillHubError = error;
+    return undefined;
+  });
+  let response = skillHubResponse;
   if (!response || response.status === 404 || response.status >= 500) {
     response = await fetch(`${normalizedBaseUrl}/v1/skills/${encodeURIComponent(skillId)}`, {
       method: "DELETE",
       headers: { ...headers, Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10_000),
     });
+  }
+  if (response.status === 404 && skillHubResponse?.status !== 404) {
+    if (skillHubError instanceof Error) throw skillHubError;
+    throw new Error(`LiteLLM skill delete failed: HTTP ${skillHubResponse?.status}`);
   }
   if (!response.ok && response.status !== 404) throw new Error(`LiteLLM skill delete failed: HTTP ${response.status}`);
   skillsCache = undefined;

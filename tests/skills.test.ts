@@ -187,6 +187,16 @@ describe("skill helpers", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("reports the Skill Hub failure when the legacy delete finds nothing", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(500, { error: "skill hub unavailable" }))
+      .mockResolvedValueOnce(jsonResponse(404, {}));
+
+    await expect(deleteSkill("https://litellm.example.com", "sk-test", "skill-1")).rejects.toThrow(
+      "LiteLLM skill delete failed: HTTP 500",
+    );
+  });
+
   it("formats enabled skills as a system-prompt section", () => {
     const section = createSkillsPromptSection([
       { id: "enabled", name: "terraform", description: "Terraform conventions", enabled: true },
