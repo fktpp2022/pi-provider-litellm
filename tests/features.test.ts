@@ -449,6 +449,33 @@ describe("feature parity", () => {
     expect(updated).toBeUndefined();
   });
 
+  it("keeps reasoning fields for gpt-5.5 Responses tool requests", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      {
+        payload: {
+          input: [{ type: "reasoning", id: "rs_1", encrypted_content: "opaque" }],
+          tools: [{ type: "function", function: { name: "noop", parameters: { type: "object" } } }],
+          reasoning: { effort: "high", summary: "auto" },
+          reasoning_effort: "high",
+        },
+      },
+      { model: { provider: "litellm", id: "llm-gateway/gpt-5.5", api: "openai-responses" } },
+    );
+
+    expect(updated).toBeUndefined();
+  });
+
   it("drops reasoning fields for gpt-5.5 route aliases", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
