@@ -759,7 +759,7 @@ function prepareLiteLLMRequestPayload(
     next[key] = value;
   };
 
-  if (modelId && shouldSuppressReasoningContent(modelId)) {
+  if (api !== "openai-responses" && modelId && shouldSuppressReasoningContent(modelId)) {
     for (const [key, value] of Object.entries(REASONING_SUPPRESSION_DEFAULTS)) update(key, value);
   }
 

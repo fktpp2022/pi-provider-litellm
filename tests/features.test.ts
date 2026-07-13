@@ -360,6 +360,26 @@ describe("feature parity", () => {
     });
   });
 
+  it("leaves Kimi Responses requests unchanged", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      { payload: { input: [{ type: "message", role: "user", content: "hi" }] } },
+      { model: { provider: "litellm", id: "kimi-k2.6", api: "openai-responses" } },
+    );
+
+    expect(updated).toBeUndefined();
+  });
+
   it("drops reasoning fields for llm-gateway/gpt-5.5 tool requests", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
